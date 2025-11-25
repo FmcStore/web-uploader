@@ -1,160 +1,124 @@
-import axios from 'axios';
-import { fileTypeFromBuffer } from 'file-type';
-import formidable from 'formidable';
+// api/upload.js
+const axios = require('axios');
+const formidable = require('formidable');
+const fs = require('fs');
+const FileType = require('file-type');
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_OWNER = process.env.GITHUB_OWNER || 'tralalawabi-art';
-const REPO = process.env.REPO || 'storagefmc';
-const BRANCH = process.env.BRANCH || 'storage';
+// KONFIGURASI DIAMBIL DARI ENVIRONMENT VARIABLES VERCEL
+const githubToken = process.env.GITHUB_TOKEN || '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';
+const githubOwner = process.env.GITHUB_OWNER || 'tralalawabi-art';
+const repo = process.env.GITHUB_REPO || 'storagefmc';
+const branch = process.env.GITHUB_BRANCH || 'storage';
 
-if (!GITHUB_TOKEN) {
-  console.warn('⚠️ GITHUB_TOKEN not set. Upload will fail.');
-}
-
-const headers = {
-  Authorization: `Bearer ${GITHUB_TOKEN}`,
-  'User-Agent': 'Vercel-GitHub-Uploader',
-  'Accept': 'application/vnd.github.v3+json'
+export const config = {
+  api: {
+    bodyParser: false, // Penting: Matikan body parser bawaan agar formidable bekerja
+  },
 };
 
-// ✅ FULL auto-create: repo + branch
+// --- LOGIKA GITHUB DARI KODE KAMU (Diadaptasi) ---
 async function ensureRepoAndBranch() {
-  if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN missing');
+  const headers = { 
+    Authorization: `Bearer ${githubToken}`,
+    'User-Agent': 'Web-Uploader'
+  };
 
-  // 1. Cek & buat repo jika belum ada
+  // Cek Repo
   try {
-    await axios.get(`https://api.github.com/repos/${GITHUB_OWNER}/${REPO}`, { headers });
-    console.log('✅ Repo already exists');
+    await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}`, { headers });
   } catch (e) {
     if (e.response?.status === 404) {
-      console.log('📦 Creating repo...');
-      await axios.post(
-        'https://api.github.com/user/repos',
-        {
-          name: REPO,
-          private: false,
-          auto_init: true,
-          description: 'Auto-created by GitHub Uploader'
-        },
-        { headers }
-      );
-      // Tunggu sebentar agar GitHub siap
-      await new Promise(r => setTimeout(r, 3000));
-    } else {
-      throw e;
-    }
+      // Buat Repo jika tidak ada
+      await axios.post(`https://api.github.com/user/repos`, {
+        name: repo, private: false, auto_init: true, description: 'Storage for Web Uploads'
+      }, { headers });
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Tunggu sebentar
+    } else throw e;
   }
 
-  // 2. Cek & buat branch jika belum ada
+  // Cek Branch
   try {
-    await axios.get(`https://api.github.com/repos/${GITHUB_OWNER}/${REPO}/branches/${BRANCH}`, { headers });
-    console.log('✅ Branch already exists');
+    await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/branches/${branch}`, { headers });
   } catch (e) {
     if (e.response?.status === 404) {
-      console.log('🌿 Creating branch...');
-      // Ambil SHA dari main/master
-      let sha;
+      // Buat branch dari main/master
       try {
-        const { data } = await axios.get(
-          `https://api.github.com/repos/${GITHUB_OWNER}/${REPO}/git/refs/heads/main`,
-          { headers }
-        );
-        sha = data.object.sha;
-      } catch {
-        const { data } = await axios.get(
-          `https://api.github.com/repos/${GITHUB_OWNER}/${REPO}/git/refs/heads/master`,
-          { headers }
-        );
-        sha = data.object.sha;
+        const baseBranch = await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs/heads/main`, { headers })
+          .catch(() => axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs/heads/master`, { headers }));
+        
+        await axios.post(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs`, {
+          ref: `refs/heads/${branch}`, sha: baseBranch.data.object.sha
+        }, { headers });
+      } catch (err) {
+        console.error('Gagal buat branch', err);
       }
-      await axios.post(
-        `https://api.github.com/repos/${GITHUB_OWNER}/${REPO}/git/refs`,
-        { ref: `refs/heads/${BRANCH}`, sha },
-        { headers }
-      );
-    } else {
-      throw e;
     }
   }
 }
 
-async function uploadToGitHub(buffer) {
-  await ensureRepoAndBranch(); // 🔥 auto-create repo & branch
+async function uploadToGithub(buffer, originalFilename) {
+  await ensureRepoAndBranch();
 
-  const detected = await fileTypeFromBuffer(buffer);
+  const detected = await FileType.fromBuffer(buffer);
   const ext = detected?.ext || 'bin';
-  const baseName = Date.now() + '-' + Math.random().toString(36).substring(2, 10);
-  const fileName = `${baseName}.${ext}`;
-  const filePath = `uploads/${fileName}`;
+  // Nama file unik: timestamp-random.ext
+  const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
+  const filePath = `uploads/${uniqueName}`;
   const base64 = buffer.toString('base64');
 
-  const response = await axios.put(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${REPO}/contents/${filePath}`,
+  const headers = { 
+    Authorization: `Bearer ${githubToken}`,
+    'User-Agent': 'Web-Uploader',
+    'Content-Type': 'application/json'
+  };
+
+  await axios.put(
+    `https://api.github.com/repos/${githubOwner}/${repo}/contents/${filePath}`,
     {
-      message: `Upload: ${fileName}`,
+      message: `Upload ${originalFilename}`,
       content: base64,
-      branch: BRANCH
+      branch: branch
     },
     { headers }
   );
 
-  return `https://raw.githubusercontent.com/${GITHUB_OWNER}/${REPO}/${BRANCH}/${filePath}`;
+  // Return direct raw link
+  return `https://raw.githubusercontent.com/${githubOwner}/${repo}/${branch}/${filePath}`;
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
+// --- HANDLER VERCEL ---
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Only POST allowed' });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (!GITHUB_TOKEN) {
-    return res.status(500).json({ error: 'GITHUB_TOKEN is not configured' });
-  }
+  try {
+    const form = formidable({});
+    
+    const [fields, files] = await form.parse(req);
+    const uploadedFile = files.file?.[0];
 
-  const form = formidable({
-    maxFileSize: 4.5 * 1024 * 1024,
-    keepExtensions: true,
-    allowEmptyFiles: false,
-    multiples: false,
-  });
-
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      return res.status(400).json({ error: 'Parse error: ' + err.message });
-    }
-
-    const fileArray = files.file;
-    if (!fileArray || !Array.isArray(fileArray) || fileArray.length === 0) {
+    if (!uploadedFile) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const file = fileArray[0];
-    if (!file?.filepath) {
-      return res.status(400).json({ error: 'Invalid file' });
-    }
+    // Baca file dari temp storage formidable ke buffer
+    const fileBuffer = fs.readFileSync(uploadedFile.filepath);
 
-    try {
-      const fs = require('fs').promises;
-      const buffer = await fs.readFile(file.filepath);
-      if (buffer.length === 0) {
-        return res.status(400).json({ error: 'File is empty' });
-      }
+    // Jalankan logika upload
+    const url = await uploadToGithub(fileBuffer, uploadedFile.originalFilename);
 
-      const url = await uploadToGitHub(buffer);
-      res.status(200).json({ url });
-    } catch (uploadErr) {
-      console.error('❌ Upload error:', uploadErr.response?.data || uploadErr.message);
-      const msg = uploadErr.response?.data?.message || uploadErr.message || 'Upload failed';
-      res.status(500).json({ error: `GitHub: ${msg}` });
-    } finally {
-      if (file.filepath) {
-        require('fs').unlinkSync(file.filepath);
-      }
-    }
-  });
+    return res.status(200).json({ 
+      success: true, 
+      url: url,
+      filename: uploadedFile.originalFilename
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Internal Server Error' 
+    });
+  }
 }
