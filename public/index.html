@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GitHub Raw Uploader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>📤 GitHub Raw Uploader</h1>
+    <p>Upload file → dapatkan direct <code>raw.githubusercontent.com</code> link</p>
+
+    <form id="uploadForm">
+      <input type="file" id="fileInput" required />
+      <button type="submit" id="uploadBtn">Upload</button>
+    </form>
+
+    <div id="progress" style="display: none; margin: 10px 0;">
+      <progress value="0" max="100"></progress>
+      <span id="progressText">0%</span>
+    </div>
+
+    <div id="result" style="display: none;">
+      <h3>✅ Upload Berhasil!</h3>
+      <p>
+        <input type="text" id="linkOutput" readonly />
+        <button id="copyBtn">Salin</button>
+      </p>
+      <a id="directLink" target="_blank">Lihat file</a>
+    </div>
+
+    <div id="error" style="display: none; color: red; margin-top: 10px;"></div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
