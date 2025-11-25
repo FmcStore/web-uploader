@@ -1,38 +1,184 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>GitHub Raw Uploader</title>
-  <link rel="stylesheet" href="style.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub File Uploader</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #e2e8f0;
+            --primary: #3b82f6;
+            --success: #22c55e;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: var(--card);
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 { margin-bottom: 1.5rem; font-size: 1.5rem; }
+        
+        .drop-zone {
+            border: 2px dashed #475569;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 1rem;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--primary);
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+        
+        input[type="file"] { display: none; }
+        
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1rem;
+            transition: opacity 0.2s;
+        }
+        button:disabled { opacity: 0.7; cursor: not-allowed; }
+        
+        #result {
+            margin-top: 1.5rem;
+            display: none;
+            background: #0f172a;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            word-break: break-all;
+        }
+        .link-text { color: var(--success); font-size: 0.9rem; margin-bottom: 0.5rem; display: block; }
+        .copy-btn { background-color: #334155; font-size: 0.8rem; padding: 0.4rem; margin-top: 0.5rem; }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <h1>📤 GitHub Raw Uploader</h1>
-    <p>Upload file → dapatkan direct <code>raw.githubusercontent.com</code> link</p>
 
-    <form id="uploadForm">
-      <input type="file" id="fileInput" required />
-      <button type="submit" id="uploadBtn">Upload</button>
-    </form>
+    <div class="container">
+        <h1>☁️ GitHub Uploader</h1>
+        <p style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 20px;">Upload file dan dapatkan direct link raw.</p>
+        
+        <div class="drop-zone" id="dropZone">
+            <p>Klik atau Drag file ke sini</p>
+            <input type="file" id="fileInput">
+            <p id="fileName" style="font-size: 0.8rem; color: var(--primary); margin-top: 10px;"></p>
+        </div>
 
-    <div id="progress" style="display: none; margin: 10px 0;">
-      <progress value="0" max="100"></progress>
-      <span id="progressText">0%</span>
+        <button id="uploadBtn">Upload File</button>
+
+        <div id="result">
+            <span class="link-text" id="urlText"></span>
+            <button class="copy-btn" onclick="copyUrl()">Salin Link</button>
+        </div>
     </div>
 
-    <div id="result" style="display: none;">
-      <h3>✅ Upload Berhasil!</h3>
-      <p>
-        <input type="text" id="linkOutput" readonly />
-        <button id="copyBtn">Salin</button>
-      </p>
-      <a id="directLink" target="_blank">Lihat file</a>
-    </div>
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileName');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const resultDiv = document.getElementById('result');
+        const urlText = document.getElementById('urlText');
 
-    <div id="error" style="display: none; color: red; margin-top: 10px;"></div>
-  </div>
+        // Handle Drag & Drop
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                updateFileName();
+            }
+        });
 
-  <script src="script.js"></script>
+        fileInput.addEventListener('change', updateFileName);
+
+        function updateFileName() {
+            if (fileInput.files.length > 0) {
+                fileNameDisplay.textContent = fileInput.files[0].name;
+            }
+        }
+
+        uploadBtn.addEventListener('click', async () => {
+            if (fileInput.files.length === 0) return alert('Pilih file dulu!');
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // UI Loading
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<div class="loader"></div> Mengupload...';
+            resultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    urlText.textContent = data.url;
+                    resultDiv.style.display = 'block';
+                    uploadBtn.innerHTML = 'Upload Berhasil!';
+                } else {
+                    alert('Gagal: ' + data.error);
+                    uploadBtn.innerHTML = 'Upload File';
+                }
+            } catch (err) {
+                alert('Terjadi kesalahan jaringan');
+                console.error(err);
+                uploadBtn.innerHTML = 'Upload File';
+            } finally {
+                uploadBtn.disabled = false;
+                setTimeout(() => {
+                    if(uploadBtn.innerHTML === 'Upload Berhasil!') uploadBtn.innerHTML = 'Upload File';
+                }, 3000);
+            }
+        });
+
+        function copyUrl() {
+            navigator.clipboard.writeText(urlText.textContent);
+            alert('Link disalin!');
+        }
+    </script>
 </body>
 </html>
