@@ -2,120 +2,111 @@
 const axios = require('axios');
 const formidable = require('formidable');
 const fs = require('fs');
-const FileType = require('file-type');
+const path = require('path');
 
-// KONFIGURASI DIAMBIL DARI ENVIRONMENT VARIABLES VERCEL
-const githubToken = process.env.GITHUB_TOKEN || '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';
-const githubOwner = process.env.GITHUB_OWNER || 'tralalawabi-art';
-const repo = process.env.GITHUB_REPO || 'storagefmc';
-const branch = process.env.GITHUB_BRANCH || 'storage';
-
+// Konfigurasi Vercel agar tidak memparsing body secara otomatis (biar formidable yang kerja)
 export const config = {
   api: {
-    bodyParser: false, // Penting: Matikan body parser bawaan agar formidable bekerja
+    bodyParser: false,
   },
 };
 
-// --- LOGIKA GITHUB DARI KODE KAMU (Diadaptasi) ---
-async function ensureRepoAndBranch() {
-  const headers = { 
-    Authorization: `Bearer ${githubToken}`,
-    'User-Agent': 'Web-Uploader'
-  };
-
-  // Cek Repo
-  try {
-    await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}`, { headers });
-  } catch (e) {
-    if (e.response?.status === 404) {
-      // Buat Repo jika tidak ada
-      await axios.post(`https://api.github.com/user/repos`, {
-        name: repo, private: false, auto_init: true, description: 'Storage for Web Uploads'
-      }, { headers });
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Tunggu sebentar
-    } else throw e;
-  }
-
-  // Cek Branch
-  try {
-    await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/branches/${branch}`, { headers });
-  } catch (e) {
-    if (e.response?.status === 404) {
-      // Buat branch dari main/master
-      try {
-        const baseBranch = await axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs/heads/main`, { headers })
-          .catch(() => axios.get(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs/heads/master`, { headers }));
-        
-        await axios.post(`https://api.github.com/repos/${githubOwner}/${repo}/git/refs`, {
-          ref: `refs/heads/${branch}`, sha: baseBranch.data.object.sha
-        }, { headers });
-      } catch (err) {
-        console.error('Gagal buat branch', err);
-      }
-    }
-  }
-}
-
-async function uploadToGithub(buffer, originalFilename) {
-  await ensureRepoAndBranch();
-
-  const detected = await FileType.fromBuffer(buffer);
-  const ext = detected?.ext || 'bin';
-  // Nama file unik: timestamp-random.ext
-  const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
-  const filePath = `uploads/${uniqueName}`;
-  const base64 = buffer.toString('base64');
-
-  const headers = { 
-    Authorization: `Bearer ${githubToken}`,
-    'User-Agent': 'Web-Uploader',
-    'Content-Type': 'application/json'
-  };
-
-  await axios.put(
-    `https://api.github.com/repos/${githubOwner}/${repo}/contents/${filePath}`,
-    {
-      message: `Upload ${originalFilename}`,
-      content: base64,
-      branch: branch
-    },
-    { headers }
-  );
-
-  // Return direct raw link
-  return `https://raw.githubusercontent.com/${githubOwner}/${repo}/${branch}/${filePath}`;
-}
-
-// --- HANDLER VERCEL ---
 export default async function handler(req, res) {
+  // 1. Cek Method
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  try {
-    const form = formidable({});
-    
-    const [fields, files] = await form.parse(req);
-    const uploadedFile = files.file?.[0];
+  // 2. Cek Environment Variables (PENTING)
+  const token = process.env.GITHUB_TOKEN;
+  const owner = process.env.GITHUB_OWNER;
+  const repo = process.env.GITHUB_REPO;
+  const branch = process.env.GITHUB_BRANCH || 'main';
 
-    if (!uploadedFile) {
-      return res.status(400).json({ error: 'No file uploaded' });
+  if (!token || !owner || !repo) {
+    console.error('❌ Environment Variables Missing');
+    return res.status(500).json({ error: 'Server config error: Missing GitHub Env Vars' });
+  }
+
+  try {
+    // 3. Parse Form Data
+    const form = formidable({});
+    let fields;
+    let files;
+    
+    try {
+        [fields, files] = await form.parse(req);
+    } catch (err) {
+        console.error('❌ Formidable Error:', err);
+        return res.status(500).json({ error: 'Gagal memproses file upload' });
     }
 
-    // Baca file dari temp storage formidable ke buffer
+    const uploadedFile = files.file?.[0];
+    if (!uploadedFile) {
+      return res.status(400).json({ error: 'Tidak ada file yang dikirim' });
+    }
+
+    console.log(`📂 Menerima file: ${uploadedFile.originalFilename}`);
+
+    // 4. Baca File ke Buffer
     const fileBuffer = fs.readFileSync(uploadedFile.filepath);
+    
+    // Encode ke Base64
+    const base64Content = fileBuffer.toString('base64');
 
-    // Jalankan logika upload
-    const url = await uploadToGithub(fileBuffer, uploadedFile.originalFilename);
+    // Buat nama file unik
+    const ext = path.extname(uploadedFile.originalFilename) || '.bin';
+    const cleanName = path.basename(uploadedFile.originalFilename, ext).replace(/[^a-zA-Z0-9]/g, '');
+    const filename = `${cleanName}-${Date.now()}${ext}`;
+    const filePath = `uploads/${filename}`;
 
-    return res.status(200).json({ 
-      success: true, 
-      url: url,
-      filename: uploadedFile.originalFilename
+    // 5. Upload ke GitHub (Menggunakan PUT request)
+    // Kita skip cek repo/branch manual biar lebih cepat & hemat API hit.
+    // GitHub API otomatis handle pembuatan file.
+    const githubUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+    
+    console.log(`🚀 Uploading to: ${githubUrl}`);
+
+    try {
+        await axios.put(
+            githubUrl,
+            {
+                message: `Upload ${filename}`,
+                content: base64Content,
+                branch: branch
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'User-Agent': 'Vercel-Uploader',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+    } catch (ghError) {
+        console.error('❌ GitHub Error:', ghError.response?.data || ghError.message);
+        
+        // Handle error spesifik
+        if (ghError.response?.status === 401) {
+            return res.status(500).json({ error: 'Token GitHub Invalid/Expired' });
+        }
+        if (ghError.response?.status === 404) {
+            return res.status(500).json({ error: 'Repo/Branch tidak ditemukan. Cek Env Vars.' });
+        }
+        throw ghError; // Lempar ke catch block utama
+    }
+
+    // 6. Sukses
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
+    console.log('✅ Upload Sukses:', rawUrl);
+
+    return res.status(200).json({
+      success: true,
+      url: rawUrl
     });
 
   } catch (error) {
-    console.error(error);
+    console.error('❌ Critical Error:', error);
     return res.status(500).json({ 
       success: false, 
       error: error.message || 'Internal Server Error' 
